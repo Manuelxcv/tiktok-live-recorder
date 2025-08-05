@@ -168,7 +168,7 @@ class TikTokRecorder:
 
                 print()
                 delay = self.automatic_interval * TimeOut.ONE_MINUTE
-                logger.info(f'Waiting {delay} minutes for the next check...')
+                logger.info(f'Waiting {delay} seconds for the next check...')
                 time.sleep(delay)
 
             except UserLiveError as ex:
@@ -183,35 +183,29 @@ class TikTokRecorder:
             except Exception as ex:
                 logger.error(f"Unexpected error: {ex}\n")
 
+
     def start_recording(self, user, room_id):
         """
-        Start recording live
+        Start recording live stream, transcode to h264 on-the-fly, save as .mkv
         """
         live_url = self.tiktok.get_live_url(room_id)
         if not live_url:
             raise LiveNotFound(TikTokError.RETRIEVE_LIVE_URL)
 
         current_date = time.strftime("%Y.%m.%d_%H-%M-%S", time.localtime())
+        # Ensure output path ends with os-specific separator
+        if isinstance(self.output, str) and self.output:
+            sep = "\\" if os.name == 'nt' else "/"
+            self.output = self.output.rstrip("/\\") + sep
 
-        if isinstance(self.output, str) and self.output != '':
-            if not (self.output.endswith('/') or self.output.endswith('\\')):
-                if os.name == 'nt':
-                    self.output = self.output + "\\"
-                else:
-                    self.output = self.output + "/"
+        output_file = f"{self.output}TK_{user}_{current_date}.mkv"
+        logger.info(f"Recording and transcoding to {output_file}...")
 
-        output = f"{self.output if self.output else ''}TK_{user}_{current_date}_flv.mp4"
-
-        if self.duration:
-            logger.info(f"Started recording for {self.duration} seconds ")
-        else:
-            logger.info("Started recording...")
-
-        buffer_size = 512 * 1024 # 512 KB buffer
+        buffer_size = 512 * 1024  # 512 KB
         buffer = bytearray()
 
         logger.info("[PRESS CTRL + C ONCE TO STOP]")
-        with open(output, "wb") as out_file:
+        with open(output_file, "wb") as out_file:
             stop_recording = False
             while not stop_recording:
                 try:
@@ -226,8 +220,9 @@ class TikTokRecorder:
                             out_file.write(buffer)
                             buffer.clear()
 
-                        elapsed_time = time.time() - start_time
-                        if self.duration and elapsed_time >= self.duration:
+                        # Check duration elapsed
+                        elapsed = time.time() - start_time
+                        if self.duration and elapsed >= self.duration:
                             stop_recording = True
                             break
 
@@ -236,28 +231,24 @@ class TikTokRecorder:
                         logger.error(Error.CONNECTION_CLOSED_AUTOMATIC)
                         time.sleep(TimeOut.CONNECTION_CLOSED * TimeOut.ONE_MINUTE)
 
-                except (RequestException,HTTPException):
+                except (RequestException, HTTPException):
                     time.sleep(2)
-
                 except KeyboardInterrupt:
                     logger.info("Recording stopped by user.")
                     stop_recording = True
-
                 except Exception as ex:
-                    logger.error(f"Unexpected error: {ex}\n")
+                    logger.error(f"Unexpected error: {ex}")
                     stop_recording = True
-
                 finally:
                     if buffer:
                         out_file.write(buffer)
                         buffer.clear()
                     out_file.flush()
 
-        logger.info(f"Recording finished: {output}\n")
-        VideoManagement.convert_flv_to_mp4(output)
+        logger.info(f"Recording finished: {output_file}")
 
         if self.use_telegram:
-            Telegram().upload(output.replace('_flv.mp4', '.mp4'))
+            Telegram().upload(output_file)
 
     def check_country_blacklisted(self):
         is_blacklisted = self.tiktok.is_country_blacklisted()

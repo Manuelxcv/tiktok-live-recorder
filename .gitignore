@@ -131,6 +131,7 @@ dmypy.json
 # video file extensions
 *.mp4
 *.flv
+*.mkv
 cookies.json
 telegram.json
 
@@ -141,3 +142,4 @@ telegram.json
 .DS_Store
 
 .idea/
+src/cookies.json

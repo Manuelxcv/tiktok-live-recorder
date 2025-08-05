@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 
 from core.tiktok_waf_solver import WAFSolver
 from http_utils.http_client import HttpClient
@@ -238,9 +239,33 @@ class TikTokAPI:
 
     def download_live_stream(self, live_url: str):
         """
-        Generator che restituisce lo streaming live per un dato room_id.
+        Start an ffmpeg subprocess to read the live URL, encode to h264, and output mkv chunks.
+        Yields:
+            bytes: next encoded data chunk
         """
-        stream = self._http_client_stream.get(live_url, stream=True)
-        for chunk in stream.iter_content(chunk_size=4096):
-            if chunk:
+        # Build ffmpeg command
+        cmd = [
+            'ffmpeg',
+            '-i', live_url,
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-f', 'matroska',
+            'pipe:1'
+        ]
+        # Launch subprocess
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=4096
+        )
+        # Read stdout in chunks
+        try:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
                 yield chunk
+        finally:
+            proc.stdout.close()
+            proc.kill()
