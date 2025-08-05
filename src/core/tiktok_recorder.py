@@ -4,6 +4,7 @@ from http.client import HTTPException
 from multiprocessing import Process
 
 from requests import RequestException
+import subprocess
 
 from core.tiktok_api import TikTokAPI
 from utils.logger_manager import logger
@@ -186,26 +187,28 @@ class TikTokRecorder:
 
     def start_recording(self, user, room_id):
         """
-        Start recording live stream, transcode to h264 on-the-fly, save as .mkv
+        Start recording live stream, transcode to H.264 in real-time, save as MKV, then remux to MP4.
         """
         live_url = self.tiktok.get_live_url(room_id)
         if not live_url:
             raise LiveNotFound(TikTokError.RETRIEVE_LIVE_URL)
 
-        current_date = time.strftime("%Y.%m.%d_%H-%M-%S", time.localtime())
-        # Ensure output path ends with os-specific separator
-        if isinstance(self.output, str) and self.output:
-            sep = "\\" if os.name == 'nt' else "/"
-            self.output = self.output.rstrip("/\\") + sep
+        # Determine output directory
+        out_dir = self.output if self.output else os.getcwd()
+        if not os.path.isdir(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
 
-        output_file = f"{self.output}TK_{user}_{current_date}.mkv"
-        logger.info(f"Recording and transcoding to {output_file}...")
+        current_date = time.strftime("%Y.%m.%d_%H-%M-%S", time.localtime())
+        base_filename = f"TK_{user}_{current_date}"
+        mkv_file = os.path.join(out_dir, base_filename + ".mkv")
+        mp4_file = os.path.join(out_dir, base_filename + ".mp4")
+        logger.info(f"Recording and transcoding to {mkv_file}...")
 
         buffer_size = 512 * 1024  # 512 KB
         buffer = bytearray()
 
         logger.info("[PRESS CTRL + C ONCE TO STOP]")
-        with open(output_file, "wb") as out_file:
+        with open(mkv_file, "wb") as out_file:
             stop_recording = False
             while not stop_recording:
                 try:
@@ -220,7 +223,7 @@ class TikTokRecorder:
                             out_file.write(buffer)
                             buffer.clear()
 
-                        # Check duration elapsed
+                        # Stop if duration reached
                         elapsed = time.time() - start_time
                         if self.duration and elapsed >= self.duration:
                             stop_recording = True
@@ -230,7 +233,6 @@ class TikTokRecorder:
                     if self.mode == Mode.AUTOMATIC:
                         logger.error(Error.CONNECTION_CLOSED_AUTOMATIC)
                         time.sleep(TimeOut.CONNECTION_CLOSED * TimeOut.ONE_MINUTE)
-
                 except (RequestException, HTTPException):
                     time.sleep(2)
                 except KeyboardInterrupt:
@@ -245,10 +247,20 @@ class TikTokRecorder:
                         buffer.clear()
                     out_file.flush()
 
-        logger.info(f"Recording finished: {output_file}")
+        logger.info(f"Recording finished: {mkv_file}")
 
-        if self.use_telegram:
-            Telegram().upload(output_file)
+        # Remux MKV to MP4 without re-encoding
+        try:
+            logger.info(f"Converting {mkv_file} to {mp4_file}...")
+            subprocess.run([
+                'ffmpeg', '-i', mkv_file,
+                '-c', 'copy', mp4_file
+            ], check=True)
+            logger.info(f"Conversion finished: {mp4_file}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error converting to MP4: {e}")
+            # Fallback: use MKV file path as output
+            mp4_file = mkv_file
 
     def check_country_blacklisted(self):
         is_blacklisted = self.tiktok.is_country_blacklisted()
